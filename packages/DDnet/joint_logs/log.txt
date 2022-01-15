@@ -1,0 +1,21 @@
+2021-12-20 10:36:44,853 - Couldn't get commit number: Command '['git', 'rev-parse', '--short', 'HEAD']' returned non-zero exit status 128.
+2021-12-20 10:36:44,853 - Arguments: 
+2021-12-20 10:36:44,853 - 	batch_size: 36
+2021-12-20 10:36:44,854 - 	epochs: 1000
+2021-12-20 10:36:44,854 - 	resume_training: False
+2021-12-20 10:36:44,854 - 	milestone: [200, 400, 600, 800]
+2021-12-20 10:36:44,854 - 	lr: 0.001
+2021-12-20 10:36:44,854 - 	no_orthog: False
+2021-12-20 10:36:44,854 - 	save_every: 200
+2021-12-20 10:36:44,854 - 	save_every_epochs: 200
+2021-12-20 10:36:44,854 - 	noise_ival: [0.0003921568627450981, 0.00392156862745098]
+2021-12-20 10:36:44,854 - 	val_noiseL: 0.00392156862745098
+2021-12-20 10:36:44,854 - 	use_gpu: True
+2021-12-20 10:36:44,854 - 	patch_size: 4
+2021-12-20 10:36:44,854 - 	temp_patch_size: 6
+2021-12-20 10:36:44,854 - 	max_number_patches: 256000
+2021-12-20 10:36:44,854 - 	log_dir: joint_logs
+2021-12-20 10:36:44,854 - 	trainset_dir: /home/wuzongliang/py/dataset/DAVIS-2017-trainval-Full-Resolution/DAVIS/JPEGImages/Full-Resolution/
+2021-12-20 10:36:44,854 - 	valset_dir: /home/wuzongliang/py/dataset/DAVIS-2017-trainval-480p/DAVIS/JPEGImages/480p/
+2021-12-20 10:36:44,855 - 	dataset_split_files: /home/wuzongliang/py/dataset/DAVIS-2017-trainval-Full-Resolution/DAVIS/ImageSets/2017/
+2021-12-20 10:36:44,855 - 	dataset_split_files_val: /home/wuzongliang/py/dataset/DAVIS-2017-trainval-480p/DAVIS/ImageSets/2017/
