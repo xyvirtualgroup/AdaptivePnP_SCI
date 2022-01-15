@@ -7,6 +7,7 @@ This repository contains the python code for the paper **Adaptive Deep PnP Algor
 ## Usage
 ### Requirements
 ```
+Python==3.9.4
 numpy==1.21.2
 pytorch==1.8.1
 scipy==1.7.1
