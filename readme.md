@@ -4,6 +4,8 @@
 # Adaptive Deep PnP Algorithm for Video Snapshot Compressive Imaging (AdaptivePnP_SCI)
 This repository contains the python code for the paper **Wu, Z., Yang, C., Su, X., & Yuan, X. (2022). Adaptive Deep PnP Algorithm for Video Snapshot Compressive Imaging. arXiv preprint arXiv:2201.05483.**.
 
+The journal paper **Wu, Z., Yang, C., Su, X., & Yuan, X. (2023). Adaptive Deep PnP Algorithm for Video Snapshot Compressive Imaging. International Journal of Computer Vision, https://doi.org/10.1007/s11263-023-01777-y.** has been published in March, 2023. The latest version code will be updated soon.
+
 
 ## Usage
 ### Requirements
@@ -49,11 +51,15 @@ Our results are saved in [OneDrive Link](https://westlakeu-my.sharepoint.com/:f:
 
 ## Citation
 ```
-@article{wu2022adaptive,
-  title={Adaptive Deep PnP Algorithm for Video Snapshot Compressive Imaging},
-  author={Wu, Zongliang and Yang, Chengshuai and Su, Xiongfei and Yuan, Xin},
-  journal={arXiv preprint arXiv:2201.05483},
-  year={2022}
+@article{wu_adaptive_2023,
+ title = {Adaptive {Deep} {PnP} {Algorithm} for {Video} {Snapshot} {Compressive} {Imaging}},
+ issn = {1573-1405},
+ url = {https://doi.org/10.1007/s11263-023-01777-y},
+ doi = {10.1007/s11263-023-01777-y},
+ journal = {International Journal of Computer Vision},
+ author = {Wu, Zongliang and Yang, Chengshuai and Su, Xiongfei and Yuan, Xin},
+ month = mar,
+ year = {2023},
 }
 ```
 
