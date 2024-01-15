@@ -323,3 +323,230 @@ def twoStageAdmm_denoise_bayer(y_bayer, Phi_bayer, _lambda=1, gamma=0.01,
         return x_bayer_np,psnr_, ssim_, psnr_all
     return cuda2np(xbgr3), x_bayer_np,psnr_, ssim_, psnr_all,model_denoise,model_demosaic # numpy
 
+def admm_denoise_bayer_demosaic_pre(y_bayer, Phi_bayer, _lambda=1, gamma=0.01,
+                denoiser='tv', iter_max=50, noise_estimate=True, sigma=None, 
+                 x0_bayer=None, 
+                X_orig=None, model=None, show_iqa=True,demosaic_method = 'malvar2004',lr_=0.000001,
+                 inital_iter=1,interval_iter=5,logf = None,useGPU=True,device=0,update_=False,update_per_iter=1):
+
+
+
+
+    y_bayer = np2tch_cuda(y_bayer)
+    Phi_bayer = np2tch_cuda(Phi_bayer)
+    # y_bayer = np2tch_cuda(y_bayer)
+    # y_bayer = np2tch_cuda(y_bayer)
+    bayer = [[0,0], [0,1], [1,0], [1,1]] # `RGGB` Bayer pattern
+
+    if not isinstance(sigma, list):
+        sigma = [sigma]
+    if not isinstance(iter_max, list):
+        iter_max = [iter_max] * len(sigma)
+
+    # stack the bayer channels at the last dimension [consistent to image color channels]
+    (nrow, ncol, nmask) = Phi_bayer.shape
+    yall = torch.zeros([nrow//2, ncol//2, 4], dtype=torch.float32).cuda()
+    Phiall = torch.zeros([nrow//2, ncol//2, nmask, 4], dtype=torch.float32).cuda()
+    Phi_sumall = torch.zeros([nrow//2, ncol//2, 4], dtype=torch.float32).cuda()
+    x0all = torch.zeros([nrow//2, ncol//2, nmask, 4], dtype=torch.float32).cuda()
+    
+    # iterative solve for each Bayer channel
+    for ib in range(len(bayer)): 
+        b = bayer[ib]
+        yall[...,ib] = y_bayer[b[0]::2, b[1]::2]
+        Phiall[...,ib] =  Phi_bayer[b[0]::2, b[1]::2]
+
+        Phib = Phiall[...,ib]
+        Phib_sum = torch.sum(Phib, dim=2)
+        Phib_sum[Phib_sum==0] = 1
+
+        Phi_sumall[...,ib] = Phib_sum
+
+        # [0] initialization
+        if x0_bayer is None:
+            # x0 = At(y, Phi) # default start point (initialized value)
+            x0all[...,ib] = At_(yall[...,ib], Phiall[...,ib]) # default start point (initialized value)
+        else:
+            x0all[...,ib] = x0_bayer[b[0]::2,b[1]::2]
+
+    # y1 = torch.zeros(y.shape)
+    y1all = torch.zeros_like(yall).cuda() 
+    # [1] start iteration for reconstruction
+    xall = x0all # initialization
+    ball = torch.zeros_like(x0all).cuda()
+    theta_all = x0all
+    x_bayer = torch.zeros_like(Phi_bayer).cuda()
+    R_m, G_m, B_m = masks_CFA_Bayer(x_bayer[:,:,0].shape)
+    R_m, G_m, B_m = np2tch_cuda(R_m), np2tch_cuda(G_m), np2tch_cuda(B_m)
+    b = torch.zeros_like(x0all).cuda()
+
+    psnr_all = []
+    k = 0
+    for idx, nsig in tqdm.tqdm(enumerate(sigma)): # iterate all noise levels
+        for it in range(iter_max[idx]): 
+            start_time = time.time()
+
+            for ib in range(len(bayer)): # iterate all bayer channels
+                yb = A_(theta_all[...,ib]+ball[...,ib], Phiall[...,ib])
+                xall[...,ib] = theta_all[...,ib]+ball[...,ib] + _lambda*(At_((yall[...,ib]-yb)/(Phi_sumall[...,ib]+gamma), Phiall[...,ib])) # GAP
+
+            
+            end_time = time.time()
+            # print('    Euclidean projection eclipsed in {:.3f}s.'.format(end_time-start_time))
+            # joint Bayer multi-channel denoising
+            # switch denoiser 
+            if denoiser== 'tv': # total variation (TV) denoising
+                tv_weight=0.1
+                tv_iter_max=5
+                multichannel=True
+                
+                xb_all = xall-ball
+                xall_vch = xb_all.reshape([nrow//2, ncol//2, nmask*4])
+                xall_vch =np2tch_cuda( denoise_tv_chambolle(cuda2np(xall_vch), tv_weight, n_iter_max=tv_iter_max, 
+                                        multichannel=multichannel))
+                theta_all = xall_vch.reshape([nrow//2, ncol//2, nmask, 4])
+               
+    
+            elif denoiser.lower() == 'PPP': # FastDVDnet video denoising
+                x_rgb = torch.zeros([nrow, ncol, 3,nmask], dtype=torch.float32).cuda()
+                xb_all = xall-ball
+                
+                
+                for ib in range(len(bayer)): 
+                    b = bayer[ib]
+                    x_bayer[b[0]::2, b[1]::2] = xb_all[...,ib]
+                for imask in range(nmask):
+                    if demosaic_method.lower == 'bilinear':
+                        x_rgb[:,:,:,imask] = demosaicing_CFA_Bayer_bilinear(x_bayer[:,:,imask])
+                    elif demosaic_method == 'malvar2004':
+                        x_rgb[:,:,:,imask] = demosaicing_CFA_Bayer_Malvar2004_tensor(x_bayer[:,:,imask],  R_m, G_m, B_m)
+                    
+                    #     x_rgb[:,:,:,imask] = demosaicing_CFA_Bayer_Menon2007(x_bayer[:,:,imask], R_m, G_m, B_m) #cv2.cvtColor(np.uint8(np.clip(x_bayer[:,:,imask],0,1)*255), cv2.COLOR_BAYER_RG2BGR)
+                if k>inital_iter and k%interval_iter==0:
+                    update_=True
+                    xbgr3, model = ffdnet_rgb_denoise_full_tensor(x_rgb,yall, Phiall, nsig,model,useGPU,lr_,update_,update_per_iter)
+         
+                else:
+                    update_=False
+                    xbgr3 = ffdnet_rgb_denoise_full_tensor(x_rgb,yall, Phiall, nsig,model,useGPU,lr_,update_)
+                #xbgr4 = np.transpose(xbgr3,(0,1,3,2))
+                theta_all[...,0] = xbgr3[0::2,0::2,0,:] # R  channel (average over two)
+                theta_all[...,1] = xbgr3[0::2,1::2,1,:] # G1=G2 channel (average over two)
+                theta_all[...,2] = xbgr3[1::2,0::2,1,:] # G2=G1 channel (average over two)
+                theta_all[...,3] = xbgr3[1::2,1::2,2,:] # B  channel (average over two)    
+             
+                
+            elif denoiser.lower() == 'ffdnet_color': 
+                TV = False
+                
+                
+                
+                x_rgb = torch.zeros([nrow, ncol, 3,nmask], dtype=torch.float32).cuda()
+                xb_all = xall-ball
+                for ib in range(len(bayer)): 
+                    b = bayer[ib]
+                    x_bayer[b[0]::2, b[1]::2] = xb_all[...,ib]
+
+                for imask in range(nmask):
+                    if demosaic_method.lower == 'bilinear':
+                        x_rgb[:,:,:,imask] = demosaicing_CFA_Bayer_bilinear(x_bayer[:,:,imask])
+                    elif demosaic_method == 'malvar2004':
+                        x_rgb[:,:,:,imask] = demosaicing_CFA_Bayer_Malvar2004_tensor(x_bayer[:,:,imask],  R_m, G_m, B_m)
+                    # else:
+                    #     x_rgb[:,:,:,imask] = np2tch_cuda(demosaicing_CFA_Bayer_Menon2007(cuda2np(x_bayer[:,:,imask]))) 
+                    #     x_rgb[:,:,:,imask] = demosaicing_CFA_Bayer_Menon2007(x_bayer[:,:,imask], R_m, G_m, B_m) #cv2.cvtColor(np.uint8(np.clip(x_bayer[:,:,imask],0,1)*255), cv2.COLOR_BAYER_RG2BGR)
+                
+               
+                if update_ and k>inital_iter and k%interval_iter==0:
+                    xbgr3, model = ffdnet_rgb_denoise_full_tensor(x_rgb,yall, Phiall, nsig,model,useGPU,lr_,update_,update_per_iter)
+                else:   
+                    xbgr3 = ffdnet_rgb_denoise_full_tensor(x_rgb,yall, Phiall, nsig,model,useGPU,lr_,update_)
+
+                theta_all[...,0] = xbgr3[0::2,0::2,0,:] # R  channel (average over two)
+                theta_all[...,1] = xbgr3[0::2,1::2,1,:] # G1=G2 channel (average over two)
+                theta_all[...,2] = xbgr3[1::2,0::2,1,:] # G2=G1 channel (average over two)
+                theta_all[...,3] = xbgr3[1::2,1::2,2,:] # B  channel (average over two)    
+                
+                
+            elif denoiser.lower() == 'fastdvd_color':  
+                TV = False
+                x_rgb = torch.zeros([nrow, ncol, 3,nmask], dtype=torch.float32).cuda()
+                
+                
+                xb_all = xall-ball
+                for ib in range(len(bayer)): 
+                    b = bayer[ib]
+                    x_bayer[b[0]::2, b[1]::2] = xb_all[...,ib]
+
+                for imask in range(nmask):
+                    if demosaic_method.lower == 'bilinear':
+                        x_rgb[:,:,:,imask] = demosaicing_CFA_Bayer_bilinear(x_bayer[:,:,imask])
+                    elif demosaic_method == 'malvar2004':
+                        x_rgb[:,:,:,imask] = demosaicing_CFA_Bayer_Malvar2004_tensor(x_bayer[:,:,imask],  R_m, G_m, B_m)
+                    # else:
+                    #     x_rgb[:,:,:,imask] = np2tch_cuda(demosaicing_CFA_Bayer_Menon2007(cuda2np(x_bayer[:,:,imask]))) 
+                    #     x_rgb[:,:,:,imask] = demosaicing_CFA_Bayer_Menon2007(x_bayer[:,:,imask], R_m, G_m, B_m) #cv2.cvtColor(np.uint8(np.clip(x_bayer[:,:,imask],0,1)*255), cv2.COLOR_BAYER_RG2BGR)
+                
+               
+                xbgr3 = fastdvdnet_denoiser_full_tensor_v2(x_rgb,nsig,yall, Phiall,model,useGPU,lr_)
+                # xbgr3 = xbgr3.permute()
+                theta_all[...,0] = xbgr3[0::2,0::2,0,:] # R  channel (average over two)
+                theta_all[...,1] = xbgr3[0::2,1::2,1,:] # G1=G2 channel (average over two)
+                theta_all[...,2] = xbgr3[1::2,0::2,1,:] # G2=G1 channel (average over two)
+                theta_all[...,3] = xbgr3[1::2,1::2,2,:] # B  channel (average over two)    
+            else:
+                raise ValueError('Unsupported denoiser {}!'.format(denoiser))
+            
+            # theta = np.clip(theta_all,0,1)
+            theta_all = torch.clip(theta_all,0,1)
+          
+            ball = ball - (xall-theta_all) # update residual
+            # [optional] calculate image quality assessment, i.e., PSNR for 
+            # every five iterations
+            if show_iqa and X_orig is not None:
+                for ib in range(len(bayer)): 
+                    b = bayer[ib]
+                    x_bayer[b[0]::2, b[1]::2] = xall[...,ib]
+                x_bayer_np = cuda2np(x_bayer)
+                
+                psnr_all.append(compare_psnr(X_orig, x_bayer_np,data_range=1.))
+                if (k+1)%2 == 0:
+                    if not noise_estimate and nsig is not None:
+                        if nsig < 1:
+                            print('  ADMM-{0} iteration {1: 3d}, sigma {2: 3g}/255, ' 
+                            'PSNR {3:2.2f} dB.'.format(denoiser.upper(), 
+                            k+1, nsig*255, psnr_all[k]))
+                            logf.write('  ADMM-{0} iteration {1: 3d}, sigma {2: 3g}/255, ' 
+                            'PSNR {3:2.2f} dB. \n'.format(denoiser.upper(), 
+                            k+1, nsig*255, psnr_all[k]))
+                        else:
+                            print('  ADMM-{0} iteration {1: 3d}, sigma {2: 3g}, ' 
+                                'PSNR {3:2.2f} dB.'.format(denoiser.upper(), 
+                                k+1, nsig, psnr_all[k]))
+                            logf.write('  ADMM-{0} iteration {1: 3d}, sigma {2: 3g}, ' 
+                                'PSNR {3:2.2f} dB.\n'.format(denoiser.upper(), 
+                                k+1, nsig, psnr_all[k]))
+                    else:
+                        print('  ADMM-{0} iteration {1: 3d}, ' 
+                            'PSNR {2:2.2f} dB.'.format(denoiser.upper(), 
+                            k+1, psnr_all[k]))
+                        logf.write('  ADMM-{0} iteration {1: 3d}, ' 
+                            'PSNR {2:2.2f} dB.\n'.format(denoiser.upper(), 
+                            k+1, psnr_all[k]))
+            k = k+1
+
+    for ib in range(len(bayer)): 
+        b = bayer[ib]
+        x_bayer[b[0]::2, b[1]::2] = xall[...,ib]
+    x_bayer_np = cuda2np(x_bayer)
+    psnr_ = []
+    ssim_ = []
+    if X_orig is not None:
+        for imask in range(nmask):
+            psnr_.append(compare_psnr(X_orig[:,:,imask], x_bayer_np[:,:,imask], data_range=1.))
+            ssim_.append(compare_ssim(X_orig[:,:,imask], x_bayer_np[:,:,imask], data_range=1.))
+    if denoiser=='tv':
+        return x_bayer_np,psnr_, ssim_, psnr_all# numpy
+    else:
+
+        return cuda2np(xbgr3), x_bayer_np,psnr_, ssim_, psnr_all,model # numpy
